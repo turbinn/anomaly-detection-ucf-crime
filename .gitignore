@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Модели и данные
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.onnx
+data/
+*.mp4
+*.avi
+*.mov
+
+# Логи и результаты
+runs/
+logs/
+*.log
+*.json
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows
+Thumbs.db
+desktop.ini

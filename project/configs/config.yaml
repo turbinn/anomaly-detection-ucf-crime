@@ -1,0 +1,56 @@
+# configs/config.yaml
+data:
+  path: "T:/recognize_anomaly/data/ucf_crime"
+  num_frames: 16
+  frame_size: 224
+  batch_size: 4  # Уменьшаем для видео с большими моделями
+  num_workers: 2
+
+training:
+  epochs: 30
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+
+models:
+  # 1. 3D ResNet-18
+  "3d_resnet":
+    architecture: "r3d_18"
+    pretrained: true
+    input_size: [3, 16, 224, 224]
+    params_m: 33
+    
+  # 2. SlowFast (упрощенная версия)
+  "slowfast":
+    architecture: "slowfast_r50"
+    pretrained: true
+    alpha: 4
+    params_m: 34
+    
+  # 3. VideoMAE (эмуляция через ViT)
+  "videomae":
+    architecture: "videomae_base"
+    pretrained: true
+    patch_size: 16
+    params_m: 86
+    
+  # 4. CNN + LSTM
+  "cnn_lstm":
+    cnn_backbone: "resnet18"
+    lstm_hidden: 512
+    lstm_layers: 2
+    params_m: 28
+    
+  # 5. TimeSformer (эмуляция)
+  "timesformer":
+    architecture: "timesformer_base"
+    pretrained: true
+    attention_layers: 12
+    params_m: 86
+
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1", "auc"]
+  threshold: 0.5
+  device: "cuda"  # или "cpu"

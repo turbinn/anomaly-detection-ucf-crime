@@ -1,0 +1,35 @@
+
+data:
+  path: "T:/recognize_anomaly/data/ucf_crime"
+  num_frames: 16
+  frame_size: 224
+  batch_size: 8  
+  num_workers: 4  
+
+training:
+  epochs: 30  
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  optimizer: "adamw"
+  scheduler: "cosine"
+
+models:
+  "3d_resnet":
+    pretrained: true
+  "r2plus1d":
+    pretrained: true
+  "slowfast":
+    pretrained: true
+    alpha: 4
+  "videomae":
+    pretrained: true
+  "cnn_lstm":
+    cnn_backbone: "resnet18"
+    lstm_hidden: 512
+    lstm_layers: 2
+  "timesformer":
+    pretrained: true
+
+evaluation:
+  threshold: 0.5
+  device: "cuda"
