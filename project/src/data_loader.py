@@ -14,12 +14,10 @@ class VideoDataset(Dataset):
         self.frames_per_video = frames_per_video
         self.is_train = is_train
         
-        # размер кадров зависит от модели
         self.resize_size = self._get_resize_size()
         self.transform = self._get_transforms()
         
     def _get_resize_size(self):
-        """Размер кадров для разных моделей"""
         sizes = {
             "r3d_18": 112,
             "mc3_18": 112,
@@ -48,7 +46,6 @@ class VideoDataset(Dataset):
             ])
     
     def _extract_frames(self, video_path):
-        """Извлекает кадры из видео"""
         frames = []
         cap = cv2.VideoCapture(video_path)
         
@@ -60,7 +57,6 @@ class VideoDataset(Dataset):
             cap.release()
             return None
         
-        # выбираем равномерно распределённые кадры
         indices = np.linspace(0, total_frames - 1, self.frames_per_video, dtype=int)
         
         for idx in indices:
@@ -72,7 +68,6 @@ class VideoDataset(Dataset):
                 frame = self.transform(frame)
                 frames.append(frame)
             else:
-                # если не удалось прочитать кадр, добавляем нулевой
                 frames.append(torch.zeros(3, self.resize_size, self.resize_size))
         
         cap.release()
@@ -88,52 +83,74 @@ class VideoDataset(Dataset):
     def __getitem__(self, idx):
         video_path = self.video_paths[idx]
         label = self.labels[idx]
-    
+        
         frames = self._extract_frames(video_path)
-    
+        
         if frames is None:
             frames = torch.zeros(self.frames_per_video, 3, self.resize_size, self.resize_size)
-    
-        # для 3D CNN: [frames, channels, H, W] -> [channels, frames, H, W]
-        if self.model_name in ["r3d_18", "mc3_18", "r2plus1d_18", "s3d"]:
+        
+        # для 3D CNN и MViT: [frames, channels, H, W] -> [channels, frames, H, W]
+        if self.model_name in ["r3d_18", "mc3_18", "r2plus1d_18", "s3d", "mvit"]:
             frames = frames.permute(1, 0, 2, 3)
-    
+        
         return frames, label
 
 
 def load_ucf_crime_data(data_root, model_name="r3d_18", frames_per_video=16):
-    """Загружает данные из структуры UCF-Crime"""
-    
     anomaly_dir = os.path.join(data_root, "Anomaly_Videos")
     normal_dir = os.path.join(data_root, "Normal_Videos")
+    
+    if not os.path.exists(anomaly_dir):
+        for item in os.listdir(data_root):
+            if 'anomaly' in item.lower():
+                anomaly_dir = os.path.join(data_root, item)
+                break
+    
+    if not os.path.exists(normal_dir):
+        for item in os.listdir(data_root):
+            if 'normal' in item.lower():
+                normal_dir = os.path.join(data_root, item)
+                break
+    
+    print(f"Anomaly path: {anomaly_dir}")
+    print(f"Normal path: {normal_dir}")
     
     video_paths = []
     labels = []
     
-    # аномальные видео - класс 1
-    for category in os.listdir(anomaly_dir):
-        category_path = os.path.join(anomaly_dir, category)
-        if os.path.isdir(category_path):
-            for video_file in os.listdir(category_path):
-                if video_file.endswith(('.mp4', '.avi')):
-                    video_paths.append(os.path.join(category_path, video_file))
+    if os.path.exists(anomaly_dir):
+        items = os.listdir(anomaly_dir)
+        has_subdirs = any(os.path.isdir(os.path.join(anomaly_dir, item)) for item in items)
+        
+        if has_subdirs:
+            for category in items:
+                category_path = os.path.join(anomaly_dir, category)
+                if os.path.isdir(category_path):
+                    for video_file in os.listdir(category_path):
+                        if video_file.endswith(('.mp4', '.avi', '.mkv')):
+                            video_paths.append(os.path.join(category_path, video_file))
+                            labels.append(1)
+        else:
+            for video_file in items:
+                if video_file.endswith(('.mp4', '.avi', '.mkv')):
+                    video_paths.append(os.path.join(anomaly_dir, video_file))
                     labels.append(1)
     
-    # нормальные видео - класс 0
-    for video_file in os.listdir(normal_dir):
-        if video_file.endswith(('.mp4', '.avi')):
-            video_paths.append(os.path.join(normal_dir, video_file))
-            labels.append(0)
+    if os.path.exists(normal_dir):
+        for video_file in os.listdir(normal_dir):
+            if video_file.endswith(('.mp4', '.avi', '.mkv')):
+                video_paths.append(os.path.join(normal_dir, video_file))
+                labels.append(0)
+    
+    print(f"Found {len(video_paths)} videos ({sum(labels)} anomaly, {len(labels)-sum(labels)} normal)")
     
     return video_paths, labels
 
 
 def create_dataloaders(data_root, model_name="r3d_18", batch_size=8, frames_per_video=16, 
                        train_split=0.8, num_workers=2):
-    """Создаёт train и test даталоадеры"""
     video_paths, labels = load_ucf_crime_data(data_root, model_name, frames_per_video)
     
-    # перемешиваем
     indices = np.random.permutation(len(video_paths))
     split_idx = int(len(video_paths) * train_split)
     
