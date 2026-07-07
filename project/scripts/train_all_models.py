@@ -9,10 +9,8 @@ from src.train import train_model
 from src.utils import compute_metrics, save_metrics
 from src.models import get_model_params
 
-
 def train_all_models(data_root, save_dir='checkpoints', results_dir='results'):
     
-    # модели для сравнения
     models_to_train = [
         "r3d_18",
         "mc3_18", 
@@ -29,7 +27,6 @@ def train_all_models(data_root, save_dir='checkpoints', results_dir='results'):
         print("="*50)
         
         try:
-            # обучаем модель
             model, history, best_acc = train_model(
                 model_name=model_name,
                 data_root=data_root,
@@ -49,9 +46,10 @@ def train_all_models(data_root, save_dir='checkpoints', results_dir='results'):
             
         except Exception as e:
             print(f"Error training {model_name}: {e}")
+            import traceback
+            traceback.print_exc()
             results[model_name] = {'error': str(e)}
     
-    # сохраняем общие результаты
     import json
     os.makedirs(results_dir, exist_ok=True)
     with open(os.path.join(results_dir, 'all_results.json'), 'w') as f:
@@ -59,11 +57,10 @@ def train_all_models(data_root, save_dir='checkpoints', results_dir='results'):
     
     return results
 
-
 if __name__ == "__main__":
-    # замени на путь к твоим данным
-    DATA_ROOT = "T:/recognize_anomaly/data/ucf_crime_small"
-    
+    # для локального запуска: DATA_ROOT = "T:/recognize_anomaly/data/ucf_crime_small"
+    # для колаб: DATA_ROOT = "/content"
+    DATA_ROOT = "/content"
     results = train_all_models(DATA_ROOT)
     
     print("\n" + "="*50)
