@@ -5,7 +5,9 @@ import torchvision.models as models
 from torchvision.models.video import r3d_18, r2plus1d_18
 import timm
 
-# 1. 3D ResNet-18
+
+# 3D ResNet-18
+
 class VideoClassifier3DResNet(nn.Module):
     """3D ResNet для классификации видео"""
     def __init__(self, num_classes=2, pretrained=True):
@@ -16,12 +18,14 @@ class VideoClassifier3DResNet(nn.Module):
     
     def forward(self, x):
         output = self.model(x)
-        # Если num_classes=2, возвращаем только второй класс (аномалия)
         if output.size(1) == 2:
-            return output[:, 1:2]  # [B, 1]
+            return output[:, 1:2]
         return output
 
-# 2. 3D ResNet + 1D (R(2+1)D)
+
+
+# R(2+1)D
+
 class VideoClassifierR2Plus1D(nn.Module):
     """R(2+1)D для классификации видео"""
     def __init__(self, num_classes=2, pretrained=True):
@@ -33,24 +37,24 @@ class VideoClassifierR2Plus1D(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-# 3. SlowFast (упрощенная версия)
+
+
+#SlowFast (упрощенная версия)
+
 class VideoClassifierSlowFast(nn.Module):
     """SlowFast архитектура"""
     def __init__(self, num_classes=2, pretrained=True, alpha=4):
         super().__init__()
         self.alpha = alpha
         
-        # Slow path
         self.slow_path = r3d_18(pretrained=pretrained)
         slow_in_features = self.slow_path.fc.in_features
         self.slow_path.fc = nn.Identity()
         
-        # Fast path
         self.fast_path = r3d_18(pretrained=pretrained)
         fast_in_features = self.fast_path.fc.in_features
         self.fast_path.fc = nn.Identity()
         
-        # Fusion layer
         self.fusion = nn.Sequential(
             nn.Linear(slow_in_features + fast_in_features, 512),
             nn.ReLU(),
@@ -61,13 +65,11 @@ class VideoClassifierSlowFast(nn.Module):
     def forward(self, x):
         B, C, T, H, W = x.shape
         
-        # Slow path: берем каждый alpha-й кадр
         slow_indices = list(range(0, T, self.alpha))
         if len(slow_indices) < 2:
             slow_indices = [0, min(T-1, 1)]
         slow_frames = x[:, :, slow_indices, :, :]
         
-        # Fast path: все кадры, но уменьшенное разрешение
         fast_frames = nn.functional.interpolate(
             x.permute(0, 2, 1, 3, 4),
             scale_factor=0.5,
@@ -80,7 +82,9 @@ class VideoClassifierSlowFast(nn.Module):
         combined = torch.cat([slow_feat, fast_feat], dim=1)
         return self.fusion(combined)
 
-# 4. VideoMAE (эмуляция через ViT)
+
+# VideoMAE (эмуляция через ViT)
+
 class VideoClassifierVideoMAE(nn.Module):
     """VideoMAE-подобная архитектура"""
     def __init__(self, num_classes=2, pretrained=True):
@@ -91,17 +95,18 @@ class VideoClassifierVideoMAE(nn.Module):
         
     def forward(self, x):
         B, C, T, H, W = x.shape
-        # Усредняем по времени для эмуляции VideoMAE
         x = x.mean(dim=2)
         return self.model(x)
 
-# 5. CNN + LSTM
+
+
+# CNN + LSTM
+
 class VideoClassifierCNNLSTM(nn.Module):
     """CNN + LSTM для видео классификации"""
     def __init__(self, num_classes=2, cnn_backbone='resnet18', lstm_hidden=512, lstm_layers=2):
         super().__init__()
         
-        # CNN backbone
         if cnn_backbone == 'resnet18':
             backbone = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
             cnn_out = 512
@@ -114,15 +119,12 @@ class VideoClassifierCNNLSTM(nn.Module):
         else:
             raise ValueError(f"Unknown backbone: {cnn_backbone}")
         
-        # Убираем классификатор
         self.cnn = nn.Sequential(*list(backbone.children())[:-2])
         self.cnn_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # LSTM
         self.lstm = nn.LSTM(cnn_out, lstm_hidden, lstm_layers, 
                            batch_first=True, bidirectional=True, dropout=0.3)
         
-        # Классификатор
         self.classifier = nn.Sequential(
             nn.Linear(lstm_hidden * 2, 256),
             nn.ReLU(),
@@ -133,7 +135,6 @@ class VideoClassifierCNNLSTM(nn.Module):
     def forward(self, x):
         B, C, T, H, W = x.shape
         
-        # Обрабатываем каждый кадр через CNN
         frame_features = []
         for t in range(T):
             frame = x[:, :, t, :, :]
@@ -142,59 +143,63 @@ class VideoClassifierCNNLSTM(nn.Module):
             feat = feat.view(B, -1)
             frame_features.append(feat)
         
-        # Стек по времени [B, T, features]
         sequence = torch.stack(frame_features, dim=1)
-        
-        # LSTM
         lstm_out, _ = self.lstm(sequence)
-        
-        # Используем последний выход
         features = lstm_out[:, -1, :]
         
         return self.classifier(features)
 
-# 6. TimeSformer (эмуляция)
+
+
+# TimeSformer (эмуляция)
+
 class VideoClassifierTimeSformer(nn.Module):
     """TimeSformer-подобная архитектура"""
     def __init__(self, num_classes=2, pretrained=True):
         super().__init__()
         self.model = timm.create_model('vit_base_patch16_224', pretrained=pretrained)
         
-        # Временной embedding
         self.temporal_pos_embed = nn.Parameter(torch.randn(1, 16, 768) * 0.02)
         
         in_features = self.model.head.in_features
         self.model.head = nn.Linear(in_features, num_classes)
         
-        # Временная проекция
         self.temporal_proj = nn.Linear(768, 768)
         
     def forward(self, x):
         B, C, T, H, W = x.shape
         
-        # Обрабатываем каждый кадр
         frame_outputs = []
         for t in range(T):
             frame = x[:, :, t, :, :]
-            # Получаем признаки без головы
             out = self.model.forward_features(frame)
-            # [B, num_patches+1, 768]
             frame_outputs.append(out)
         
-        # [B, T, num_patches+1, 768]
         time_stack = torch.stack(frame_outputs, dim=1)
-        
-        # Усредняем по патчам
-        time_avg = time_stack.mean(dim=2)  # [B, T, 768]
-        
-        # Добавляем временной embedding
+        time_avg = time_stack.mean(dim=2)
         time_avg = time_avg + self.temporal_pos_embed[:, :T, :]
-        
-        # Усредняем по времени
-        features = time_avg.mean(dim=1)  # [B, 768]
+        features = time_avg.mean(dim=1)
         
         return self.model.head(features)
 
+
+
+# X3D-M
+
+class VideoClassifierX3D(nn.Module):
+    """X3D-M для классификации видео"""
+    def __init__(self, num_classes=2, pretrained=True):
+        super().__init__()
+        self.model = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_m', pretrained=pretrained)
+        in_features = self.model.blocks[-1].proj.in_features
+        self.model.blocks[-1].proj = nn.Linear(in_features, num_classes)
+    
+    def forward(self, x):
+        return self.model(x)
+
+
+
+# Фабрика моделей
 
 def get_model(model_name, num_classes=2, pretrained=True):
     """Фабрика моделей"""
@@ -204,7 +209,8 @@ def get_model(model_name, num_classes=2, pretrained=True):
         'slowfast': lambda: VideoClassifierSlowFast(num_classes, pretrained),
         'videomae': lambda: VideoClassifierVideoMAE(num_classes, pretrained),
         'cnn_lstm': lambda: VideoClassifierCNNLSTM(num_classes, lstm_hidden=512, lstm_layers=2),
-        'timesformer': lambda: VideoClassifierTimeSformer(num_classes, pretrained)
+        'timesformer': lambda: VideoClassifierTimeSformer(num_classes, pretrained),
+        'x3d_m': lambda: VideoClassifierX3D(num_classes, pretrained)
     }
     
     if model_name not in models_dict:
