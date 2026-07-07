@@ -48,13 +48,13 @@ class CNNLSTM(nn.Module):
 
 def get_model(model_name, num_classes=2, pretrained=True):
     """
-    Поддерживаемые модели из torchvision:
-    - r3d_18: 3D ResNet (33M параметров)
-    - mc3_18: Mixed 3D/2D Convolution (33M параметров)
-    - r2plus1d_18: (2+1)D CNN (33M параметров)
-    - mvit: Multiscale Vision Transformer (5M параметров)
-    - s3d: Separable 3D CNN (33M параметров)
-    - cnn_lstm: гибридная CNN+LSTM (28M параметров)
+    Поддерживаемые модели:
+    - r3d_18: 3D ResNet (33M)
+    - mc3_18: Mixed 3D/2D (33M)
+    - r2plus1d_18: (2+1)D (33M)
+    - mvit: Multiscale Vision Transformer (5M)
+    - s3d: Separable 3D (33M)
+    - cnn_lstm: гибридная (28M)
     """
     
     if model_name == "r3d_18":
@@ -71,10 +71,17 @@ def get_model(model_name, num_classes=2, pretrained=True):
         
     elif model_name == "mvit":
         model = video_models.mvit_v2_s(pretrained=pretrained)
-        # у MViT другой классификатор - head вместо fc
+        # у MViT head - Sequential, заменяем последний слой
         if hasattr(model, 'head'):
-            model.head = nn.Linear(model.head.in_features, num_classes)
-        else:
+            if isinstance(model.head, nn.Sequential):
+                # находим размер входа последнего слоя
+                last_layer = model.head[-1]
+                in_features = last_layer.in_features
+                # заменяем последний слой
+                model.head[-1] = nn.Linear(in_features, num_classes)
+            else:
+                model.head = nn.Linear(model.head.in_features, num_classes)
+        elif hasattr(model, 'fc'):
             model.fc = nn.Linear(model.fc.in_features, num_classes)
         
     elif model_name == "s3d":
@@ -85,13 +92,12 @@ def get_model(model_name, num_classes=2, pretrained=True):
         model = CNNLSTM(num_classes=num_classes, pretrained=pretrained)
         
     else:
-        raise ValueError(f"Unknown model: {model_name}. Available: r3d_18, mc3_18, r2plus1d_18, mvit, s3d, cnn_lstm")
+        raise ValueError(f"Unknown model: {model_name}")
     
     return model
 
 
 def get_model_params(model_name):
-    """Возвращает количество параметров для каждой модели"""
     params = {
         "r3d_18": 33_000_000,
         "mc3_18": 33_000_000,
@@ -104,7 +110,6 @@ def get_model_params(model_name):
 
 
 def get_recommended_batch_size(model_name):
-    """Рекомендованный batch_size для каждой модели"""
     batch_sizes = {
         "r3d_18": 8,
         "mc3_18": 8,

@@ -88,13 +88,16 @@ class VideoDataset(Dataset):
     def __getitem__(self, idx):
         video_path = self.video_paths[idx]
         label = self.labels[idx]
-        
+    
         frames = self._extract_frames(video_path)
-        
+    
         if frames is None:
-            # возвращаем нулевой тензор если видео не загрузилось
             frames = torch.zeros(self.frames_per_video, 3, self.resize_size, self.resize_size)
-        
+    
+        # для 3D CNN: [frames, channels, H, W] -> [channels, frames, H, W]
+        if self.model_name in ["r3d_18", "mc3_18", "r2plus1d_18", "s3d"]:
+            frames = frames.permute(1, 0, 2, 3)
+    
         return frames, label
 
 
