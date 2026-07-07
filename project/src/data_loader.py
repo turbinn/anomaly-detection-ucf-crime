@@ -96,61 +96,56 @@ class VideoDataset(Dataset):
         return frames, label
 
 
-def load_ucf_crime_data(data_root, model_name="r3d_18", frames_per_video=16):
+def load_ucf_crime_data(data_root):
     anomaly_dir = os.path.join(data_root, "Anomaly_Videos")
     normal_dir = os.path.join(data_root, "Normal_Videos")
     
     if not os.path.exists(anomaly_dir):
-        for item in os.listdir(data_root):
-            if 'anomaly' in item.lower():
-                anomaly_dir = os.path.join(data_root, item)
-                break
+        print(f"Ошибка: папка {anomaly_dir} не найдена")
+        return [], []
     
     if not os.path.exists(normal_dir):
-        for item in os.listdir(data_root):
-            if 'normal' in item.lower():
-                normal_dir = os.path.join(data_root, item)
-                break
-    
-    print(f"Anomaly path: {anomaly_dir}")
-    print(f"Normal path: {normal_dir}")
+        print(f"Ошибка: папка {normal_dir} не найдена")
+        return [], []
     
     video_paths = []
     labels = []
     
-    if os.path.exists(anomaly_dir):
-        items = os.listdir(anomaly_dir)
-        has_subdirs = any(os.path.isdir(os.path.join(anomaly_dir, item)) for item in items)
-        
-        if has_subdirs:
-            for category in items:
-                category_path = os.path.join(anomaly_dir, category)
-                if os.path.isdir(category_path):
-                    for video_file in os.listdir(category_path):
-                        if video_file.endswith(('.mp4', '.avi', '.mkv')):
-                            video_paths.append(os.path.join(category_path, video_file))
-                            labels.append(1)
-        else:
-            for video_file in items:
-                if video_file.endswith(('.mp4', '.avi', '.mkv')):
-                    video_paths.append(os.path.join(anomaly_dir, video_file))
-                    labels.append(1)
+    # --- Аномальные видео (рекурсивный обход всех папок) ---
+    print(f"Поиск аномальных видео в {anomaly_dir}...")
+    anomaly_count = 0
+    for root, dirs, files in os.walk(anomaly_dir):
+        for file in files:
+            if file.endswith(('.mp4', '.avi', '.mkv', '.mov')):
+                video_paths.append(os.path.join(root, file))
+                labels.append(1)
+                anomaly_count += 1
     
-    if os.path.exists(normal_dir):
-        for video_file in os.listdir(normal_dir):
-            if video_file.endswith(('.mp4', '.avi', '.mkv')):
-                video_paths.append(os.path.join(normal_dir, video_file))
-                labels.append(0)
+    print(f"Найдено аномальных видео: {anomaly_count}")
     
-    print(f"Found {len(video_paths)} videos ({sum(labels)} anomaly, {len(labels)-sum(labels)} normal)")
+    # --- Нормальные видео ---
+    print(f"Поиск нормальных видео в {normal_dir}...")
+    normal_count = 0
+    for file in os.listdir(normal_dir):
+        if file.endswith(('.mp4', '.avi', '.mkv', '.mov')):
+            video_paths.append(os.path.join(normal_dir, file))
+            labels.append(0)
+            normal_count += 1
+    
+    print(f"Найдено нормальных видео: {normal_count}")
+    print(f"\nИтого: {len(video_paths)} видео ({anomaly_count} аномалий, {normal_count} нормальных)")
     
     return video_paths, labels
 
 
 def create_dataloaders(data_root, model_name="r3d_18", batch_size=8, frames_per_video=16, 
                        train_split=0.8, num_workers=2):
-    video_paths, labels = load_ucf_crime_data(data_root, model_name, frames_per_video)
+    video_paths, labels = load_ucf_crime_data(data_root)
     
+    if len(video_paths) == 0:
+        raise ValueError("Не найдено ни одного видео!")
+    
+    # перемешиваем
     indices = np.random.permutation(len(video_paths))
     split_idx = int(len(video_paths) * train_split)
     
@@ -161,6 +156,8 @@ def create_dataloaders(data_root, model_name="r3d_18", batch_size=8, frames_per_
     train_labels = [labels[i] for i in train_indices]
     test_paths = [video_paths[i] for i in test_indices]
     test_labels = [labels[i] for i in test_indices]
+    
+    print(f"Train: {len(train_paths)} видео, Test: {len(test_paths)} видео")
     
     train_dataset = VideoDataset(
         train_paths, train_labels, model_name, frames_per_video, is_train=True
