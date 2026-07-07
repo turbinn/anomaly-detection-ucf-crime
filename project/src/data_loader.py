@@ -1,219 +1,161 @@
 import os
-import cv2
 import torch
-import numpy as np
 from torch.utils.data import Dataset, DataLoader
-from sklearn.model_selection import train_test_split
-import glob
-from pathlib import Path
-import random
+from PIL import Image
+import torchvision.transforms as transforms
+import cv2
+import numpy as np
 
-class UCFCrimeVideoDataset(Dataset):
-    """Dataset для загрузки видеофрагментов из UCF-Crime"""
+class VideoDataset(Dataset):
+    def __init__(self, video_paths, labels, model_name="r3d_18", frames_per_video=16, is_train=True):
+        self.video_paths = video_paths
+        self.labels = labels
+        self.model_name = model_name
+        self.frames_per_video = frames_per_video
+        self.is_train = is_train
+        
+        # размер кадров зависит от модели
+        self.resize_size = self._get_resize_size()
+        self.transform = self._get_transforms()
+        
+    def _get_resize_size(self):
+        """Размер кадров для разных моделей"""
+        sizes = {
+            "r3d_18": 112,
+            "mc3_18": 112,
+            "r2plus1d_18": 112,
+            "mvit": 224,
+            "s3d": 112,
+            "cnn_lstm": 112
+        }
+        return sizes.get(self.model_name, 112)
     
-    def __init__(self, data_path, split='train', num_frames=16, frame_size=224, 
-                 transform=None, samples_per_video=3):
-        self.data_path = Path(data_path)
-        self.num_frames = num_frames
-        self.frame_size = frame_size
-        self.transform = transform
-        self.samples_per_video = samples_per_video
-        
-        # Сбор всех видеофайлов
-        self.video_files = []
-        self.labels = []
-        
-        # Проверяем структуру UCF-Crime
-        anomaly_path = self.data_path / 'Anomaly_Videos'
-        normal_path = self.data_path / 'Normal_Videos'
-        
-        if anomaly_path.exists():
-            for video in glob.glob(str(anomaly_path / '**/*.mp4'), recursive=True):
-                self.video_files.append(video)
-                self.labels.append(1)
-        
-        if normal_path.exists():
-            for video in glob.glob(str(normal_path / '**/*.mp4'), recursive=True):
-                self.video_files.append(video)
-                self.labels.append(0)
-        
-        # Если не найдено, ищем все mp4
-        if not self.video_files:
-            for video in glob.glob(str(self.data_path / '**/*.mp4'), recursive=True):
-                if 'Anomaly' in video or 'Anomalous' in video:
-                    self.video_files.append(video)
-                    self.labels.append(1)
-                elif 'Normal' in video:
-                    self.video_files.append(video)
-                    self.labels.append(0)
-                else:
-                    # Пробуем определить по имени файла
-                    name = os.path.basename(video).lower()
-                    if any(word in name for word in ['abandon', 'arrest', 'assault', 'burglary', 
-                                                      'explosion', 'fighting', 'robbery', 'shooting',
-                                                      'shoplifting', 'stealing', 'vandalism']):
-                        self.video_files.append(video)
-                        self.labels.append(1)
-                    else:
-                        self.video_files.append(video)
-                        self.labels.append(0)
-        
-        print(f"Найдено видео: {len(self.video_files)}")
-        print(f"  Аномалий: {sum(self.labels)}")
-        print(f"  Нормальных: {len(self.labels) - sum(self.labels)}")
-        
-        # Создаём список (видео, метка, номер клипа)
-        self.samples = []
-        for video_path, label in zip(self.video_files, self.labels):
-            # Получаем количество кадров в видео
-            cap = cv2.VideoCapture(video_path)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            cap.release()
-            
-            if total_frames < self.num_frames:
-                # Если видео слишком короткое, используем все кадры
-                self.samples.append((video_path, label, 0, total_frames))
-            else:
-                # Генерируем несколько клипов из одного видео
-                for i in range(self.samples_per_video):
-                    start_frame = random.randint(0, max(0, total_frames - self.num_frames))
-                    self.samples.append((video_path, label, start_frame, total_frames))
-        
-        print(f"Всего клипов: {len(self.samples)}")
-        
-        # Разделение на train/val/test
-        if split == 'train':
-            self.samples, _ = train_test_split(
-                self.samples, test_size=0.3, random_state=42, 
-                stratify=[l for _, l, _, _ in self.samples]
-            )
-            # Дополнительное разделение: часть train для валидации
-            self.samples, self.val_samples = train_test_split(
-                self.samples, test_size=0.2, random_state=42,
-                stratify=[l for _, l, _, _ in self.samples]
-            )
-            if split == 'val':
-                self.samples = self.val_samples
-        elif split == 'test':
-            _, self.samples = train_test_split(
-                self.samples, test_size=0.3, random_state=42,
-                stratify=[l for _, l, _, _ in self.samples]
-            )
-        
-        print(f"{split}: {len(self.samples)} клипов")
-        
-    def __len__(self):
-        return len(self.samples)
+    def _get_transforms(self):
+        if self.is_train:
+            return transforms.Compose([
+                transforms.Resize((self.resize_size, self.resize_size)),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.43216, 0.394666, 0.37645],
+                                   std=[0.22803, 0.22145, 0.216989])
+            ])
+        else:
+            return transforms.Compose([
+                transforms.Resize((self.resize_size, self.resize_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.43216, 0.394666, 0.37645],
+                                   std=[0.22803, 0.22145, 0.216989])
+            ])
     
-    def load_video_clip(self, video_path, start_frame=0):
-        """Загружает клип из видео"""
-        cap = cv2.VideoCapture(video_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        
+    def _extract_frames(self, video_path):
+        """Извлекает кадры из видео"""
         frames = []
-        for _ in range(self.num_frames):
+        cap = cv2.VideoCapture(video_path)
+        
+        if not cap.isOpened():
+            return None
+        
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames == 0:
+            cap.release()
+            return None
+        
+        # выбираем равномерно распределённые кадры
+        indices = np.linspace(0, total_frames - 1, self.frames_per_video, dtype=int)
+        
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ret, frame = cap.read()
-            if not ret:
-                break
-            # Изменяем размер
-            frame = cv2.resize(frame, (self.frame_size, self.frame_size))
-            frames.append(frame)
+            if ret:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = Image.fromarray(frame)
+                frame = self.transform(frame)
+                frames.append(frame)
+            else:
+                # если не удалось прочитать кадр, добавляем нулевой
+                frames.append(torch.zeros(3, self.resize_size, self.resize_size))
         
         cap.release()
         
-        # Если кадров меньше чем нужно, дублируем последний
-        while len(frames) < self.num_frames:
-            frames.append(frames[-1] if frames else np.zeros((self.frame_size, self.frame_size, 3), dtype=np.uint8))
+        if len(frames) == 0:
+            return None
         
-        return frames
+        return torch.stack(frames)
+    
+    def __len__(self):
+        return len(self.video_paths)
     
     def __getitem__(self, idx):
-        video_path, label, start_frame, total_frames = self.samples[idx]
+        video_path = self.video_paths[idx]
+        label = self.labels[idx]
         
-        # Загружаем кадры
-        frames = self.load_video_clip(video_path, start_frame)
+        frames = self._extract_frames(video_path)
         
-        # Преобразуем в numpy array [T, H, W, C]
-        frames = np.array(frames, dtype=np.float32) / 255.0
+        if frames is None:
+            # возвращаем нулевой тензор если видео не загрузилось
+            frames = torch.zeros(self.frames_per_video, 3, self.resize_size, self.resize_size)
         
-        # Преобразуем в [C, T, H, W]
-        frames = np.transpose(frames, (3, 0, 1, 2))
-        
-        # Применяем аугментации для train
-        if self.transform is not None:
-            frames = self.transform(frames)
-        
-        return torch.FloatTensor(frames), torch.FloatTensor([label])
+        return frames, label
 
 
-class VideoTransform:
-    """Преобразования для видео"""
-    def __init__(self, is_train=True, augment=True):
-        self.is_train = is_train
-        self.augment = augment
-        
-    def __call__(self, video):
-        # video: [C, T, H, W]
-        if self.is_train and self.augment:
-            # Горизонтальный флип
-            if np.random.random() > 0.5:
-                video = np.flip(video, axis=-1).copy()
-            
-            # Случайное изменение яркости
-            if np.random.random() > 0.7:
-                brightness = np.random.uniform(0.8, 1.2)
-                video = np.clip(video * brightness, 0, 1)
-            
-            # Случайный шум
-            if np.random.random() > 0.8:
-                noise = np.random.normal(0, 0.02, video.shape)
-                video = np.clip(video + noise, 0, 1)
-        
-        # Нормализация (ImageNet stats)
-        mean = np.array([0.485, 0.456, 0.406])[:, None, None, None]
-        std = np.array([0.229, 0.224, 0.225])[:, None, None, None]
-        video = (video - mean) / std
-        
-        return video
-
-
-def create_dataloaders(data_path, batch_size=4, num_frames=16, frame_size=224, 
-                       num_workers=2, samples_per_video=3):
-    """Создает DataLoader для train/val/test"""
-    transform_train = VideoTransform(is_train=True, augment=True)
-    transform_val = VideoTransform(is_train=False, augment=False)
+def load_ucf_crime_data(data_root, model_name="r3d_18", frames_per_video=16):
+    """Загружает данные из структуры UCF-Crime"""
     
-    train_dataset = UCFCrimeVideoDataset(
-        data_path, split='train', 
-        num_frames=num_frames, frame_size=frame_size,
-        transform=transform_train, samples_per_video=samples_per_video
+    anomaly_dir = os.path.join(data_root, "Anomaly_Videos")
+    normal_dir = os.path.join(data_root, "Normal_Videos")
+    
+    video_paths = []
+    labels = []
+    
+    # аномальные видео - класс 1
+    for category in os.listdir(anomaly_dir):
+        category_path = os.path.join(anomaly_dir, category)
+        if os.path.isdir(category_path):
+            for video_file in os.listdir(category_path):
+                if video_file.endswith(('.mp4', '.avi')):
+                    video_paths.append(os.path.join(category_path, video_file))
+                    labels.append(1)
+    
+    # нормальные видео - класс 0
+    for video_file in os.listdir(normal_dir):
+        if video_file.endswith(('.mp4', '.avi')):
+            video_paths.append(os.path.join(normal_dir, video_file))
+            labels.append(0)
+    
+    return video_paths, labels
+
+
+def create_dataloaders(data_root, model_name="r3d_18", batch_size=8, frames_per_video=16, 
+                       train_split=0.8, num_workers=2):
+    """Создаёт train и test даталоадеры"""
+    video_paths, labels = load_ucf_crime_data(data_root, model_name, frames_per_video)
+    
+    # перемешиваем
+    indices = np.random.permutation(len(video_paths))
+    split_idx = int(len(video_paths) * train_split)
+    
+    train_indices = indices[:split_idx]
+    test_indices = indices[split_idx:]
+    
+    train_paths = [video_paths[i] for i in train_indices]
+    train_labels = [labels[i] for i in train_indices]
+    test_paths = [video_paths[i] for i in test_indices]
+    test_labels = [labels[i] for i in test_indices]
+    
+    train_dataset = VideoDataset(
+        train_paths, train_labels, model_name, frames_per_video, is_train=True
+    )
+    test_dataset = VideoDataset(
+        test_paths, test_labels, model_name, frames_per_video, is_train=False
     )
     
-    val_dataset = UCFCrimeVideoDataset(
-        data_path, split='val',
-        num_frames=num_frames, frame_size=frame_size,
-        transform=transform_val, samples_per_video=1
-    )
-    
-    test_dataset = UCFCrimeVideoDataset(
-        data_path, split='test',
-        num_frames=num_frames, frame_size=frame_size,
-        transform=transform_val, samples_per_video=1
-    )
-
-    use_pin = torch.cuda.is_available()
-
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, 
-        num_workers=num_workers, pin_memory=use_pin
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, 
-        num_workers=num_workers, pin_memory=use_pin
+        num_workers=num_workers, pin_memory=True
     )
     test_loader = DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False, 
-        num_workers=num_workers, pin_memory=use_pin
+        test_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=True
     )
     
-    return train_loader, val_loader, test_loader
+    return train_loader, test_loader, len(train_dataset), len(test_dataset)
